@@ -1,0 +1,81 @@
+---
+title: "NLP_PredAlgorithm-NGramGenerator"
+author: "Carlos A. Nallim"
+date: "21 de agosto de 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("C:/Users/usuario/Documents/CN/Coursera/DataScienceSpecialization/CapstoneProject/Project")
+library(readr)
+blogs<-read_lines("./en_US.blogs.txt")
+library(quanteda)
+library(data.table)
+```
+
+
+## INITIAL DATA CLEANING 
+
+```{r}
+#Let´s remove characters that cause problems
+blogs <- iconv(blogs, 'UTF-8', 'ASCII',sub="")
+
+
+# In future processing I will use training (60%) and test sets (40%) from blogs´ file. However, for speed, I will now work with a sample of 10% of the blogs´ file
+
+samplesize<-length(blogs)*0.6
+
+set.seed(1234)
+train_ind<-sample(seq_along(blogs),size=samplesize)
+
+trainblogs<-blogs[train_ind]
+testblogs<-blogs[-train_ind]
+
+outCon <- file("trainblogs.txt", "w")
+writeLines(trainblogs, con = outCon)
+close(outCon) 
+
+outCon <- file("testblogs.txt", "w")
+writeLines(testblogs, con = outCon)
+close(outCon) 
+
+```
+
+
+
+
+Step 1 - Unigram, Bigram and Trigram counts
+
+```{r}
+
+blogstraining<-char_tolower(trainblogs)
+blogscorpus<-corpus(blogstraining)
+
+# creation of uni, bi & trigrams, and their ngram counts
+
+NgramGen<- function (n) {
+      blogstokens<-tokenize(blogscorpus,  remove_punct=TRUE, remove_numbers=TRUE, remove_symbols=TRUE, remove_twitter=TRUE,remove_URL=TRUE, ngrams=n, concatenator= " ")
+      myDfm<-dfm(blogstokens)
+      myDfm<-dfm_trim(myDfm, min_count = 2)
+      dat<-topfeatures(myDfm,ntype(myDfm))
+      ng<-names(dat)
+      count=unname(dat)
+      ngram<-data.table(ng,count)
+      ngram[order(ng)]
+}
+
+unigrams<-NgramGen(1)
+bigrams<-NgramGen(2)
+trigrams<-NgramGen(3)
+
+head(unigrams) ; head(bigrams); head(trigrams)
+
+
+write.csv(unigrams,"unigrams.csv")
+write.csv(bigrams,"bigrams.csv")
+write.csv(trigrams,"trigrams.csv")
+```

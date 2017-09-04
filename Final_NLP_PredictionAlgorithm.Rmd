@@ -1,0 +1,275 @@
+---
+title: "Final_NLP_PredAlgorithm"
+author: "Carlos A. Nallim"
+date: "28 de agosto de 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Read pre-processed data files and load libraries
+
+
+```{r}
+setwd("C:/Users/usuario/Documents/CN/Coursera/DataScienceSpecialization/CapstoneProject/Project")
+
+
+#Read previously prepared unigrams, bigrams and trigrams (ng + counts)
+
+
+library(data.table)
+library(quanteda)
+library(stringr)
+
+trigrams<-fread("trigrams.csv", drop = "V1")
+bigrams<-fread("bigrams.csv",drop = "V1")
+unigrams<-fread("unigrams.csv",drop = "V1")
+```
+
+
+
+
+1.- BIGRAMS
+
+1.1  Existing bigrams
+
+```{r}
+# 1.1.1 Compute Alphabigram
+
+#Alpha bigrams (discounted prob mass at bigram level)
+
+alphabigram<- function (target,bigrams) {
+regex<-sprintf("%s%s%s", "^", word(target,-1), " ")
+setkey(bigrams,ng)
+bigalpha<-bigrams[ng %like% regex]
+head(bigalpha)
+setkey(bigalpha,count)
+alphabigram<-1-(sum(bigalpha[,(count-gamma2)])/(sum(bigalpha$count)))
+return(alphabigram)
+
+}
+```
+
+```{r}
+# 1.1.2 Compute probabilities (qbo) or existing bigrams (Eq. 10)
+
+existing_bigrams<- function (unigrams, bigrams, target,qbo_existing_trigs,gamma2) {
+
+
+#Look for existing bigrams other than those at the end of existing trigrams
+
+  regex<-sprintf("%s%s%s", "^", word(target,-1), " ")
+setkey(bigrams,ng)
+bigalpha<-bigrams[ng %like% regex]
+  
+  
+  setkey(unigrams,ng)
+  denominator<-unigrams[word(target,-1)]$count
+
+  setkey(bigalpha,ng)
+  qbo_existing_bigrams<-bigalpha[!word(qbo_existing_trigs$ng,-2,-1)]
+  head(qbo_existing_bigrams)
+  setkey(qbo_existing_bigrams,count)
+  qbo_existing_bigrams[,count := (count-gamma2)/denominator]
+  setnames(qbo_existing_bigrams, "count", "probab")
+  return(qbo_existing_bigrams)
+  
+}
+
+```
+
+
+1.2 Compute backed-off probabilities for potential (i.e. non-observed in the corpus) bigrams
+
+
+
+```{r}
+
+nonexistent_bigrams<- function(unigrams,qbo_existing_bigrams,target,alphabigram) {
+  
+  
+#Unobserved (potential) bigrams from our vocabulary, and their count:
+  setkey(unigrams,ng)
+  qbo_nonexistent_bigrams<-unigrams[!word(qbo_existing_bigrams$ng,-1)]
+  setkey(qbo_nonexistent_bigrams,ng)
+  qbo_nonexistent_bigrams<-qbo_nonexistent_bigrams[!word(qbo_existing_trigs$ng,-1)]
+#NOTE THAT qb_nonexistent_bigrams, at this point contains the unigrams not present neither in bigrams nor in trigrams, and their count. In the following instruction I add the word (w-1) -the middle word in a trigram, but it doesn´t change the fact that the count column contains the freq of unobserved unigrams. This comes handy to carry on the next computations.
+  qbo_nonexistent_bigrams$ng<-paste(word(target,-1), qbo_nonexistent_bigrams$ng)
+head(qbo_nonexistent_bigrams)
+
+# Apply eq. 16:
+
+denominator<-sum(qbo_nonexistent_bigrams$count)
+denominator
+setkey(qbo_nonexistent_bigrams,count)
+qbo_nonexistent_bigrams[,count := alphabigram * count/denominator]
+setnames(qbo_nonexistent_bigrams, "count", "probab")
+return(qbo_nonexistent_bigrams)
+
+}
+```
+
+
+2. TRIGRAMS:
+
+2.1 observed trigrams
+
+```{r}
+
+# Compute probabilities of existing trigrams (i.e. trigrams in corpues whose two first words == target)
+
+existing_trigrams<- function (target,trigrams,bigrams,gamma2) {
+  
+  #1) Find Existing trigrams starting with "target" and compute probabilities
+
+regex <- sprintf("%s%s%s", "^", target, " ")
+
+qbo_existing_trigs<-(trigrams[ng %like% regex])
+qbo_existing_trigs[,count := as.numeric(count)]
+qbo_existing_trigs
+
+
+#prob existing trigrams
+  
+# first find total number of bigrams == target
+  idx<-bigrams[,.I[which(ng==target)]]
+  countbigrams_idemTarget<-bigrams[idx,]$count
+  countbigrams_idemTarget
+  
+setkey(bigrams,ng)
+prob<-qbo_existing_trigs[,(count-gamma2)]/countbigrams_idemTarget
+
+prob
+
+#Adjust column name and assign results
+setnames(qbo_existing_trigs, "count", "probab")
+qbo_existing_trigs$probab<-prob
+
+return(qbo_existing_trigs)
+  }
+```
+
+2.2 Non-existent trigrams
+
+```{r}
+# 2.2.1 Compute Alphatrigram
+
+#Alpha trigrams (discounted prob mass at trigram level)
+
+alphatrigram<- function (target,bigrams,trigrams) {
+regex<-sprintf("%s%s%s", "^", word(target,-2,-1), " ")
+setkey(trigrams,ng)
+bigalpha<-trigrams[ng %like% regex]
+head(bigalpha)
+
+# denominator for the next computation: find total number of bigrams == target
+  idx<-bigrams[,.I[which(ng==target)]]
+  countbigrams_idemTarget<-bigrams[idx,]$count
+
+setkey(bigalpha,count)
+alphatrigram<-1-(sum(bigalpha[,(count-gamma3)])/(countbigrams_idemTarget))
+
+return(alphatrigram)
+
+}
+```
+
+2.2.2 Compute backed-off probabilities for potential (i.e. non-observed in the corpus) bigrams
+PREDICTION TABLE GENERATION, USING BACK OFF
+
+```{r}
+
+nonexistent_trigrams<- function(qbo_bigrams,target) {
+  
+#Unobserved (potential) trigrams from our vocabulary, and their count:
+qbo_nonexistent_trigrams<-data.table(ng=vector(mode = "character", length =0), probab=vector(mode = "numeric", length = 0))
+setkey(qbo_nonexistent_trigrams,ng)
+  qbo_nonexistent_trigrams<-qbo_bigrams
+  qbo_nonexistent_trigrams$ng<-paste(word(target,-2), qbo_bigrams$ng)
+  head(qbo_nonexistent_trigrams)
+  
+  # Now apply eq 17
+ denominator<-sum(qbo_bigrams$probab)
+denominator
+
+setkey(qbo_nonexistent_trigrams,probab)
+qbo_nonexistent_trigrams[,probab := as.double(.(list(alphatrigram * probab/denominator)))]
+head(qbo_nonexistent_trigrams)
+sum(qbo_nonexistent_trigrams$probab)
+
+return(qbo_nonexistent_trigrams)
+
+}
+```
+
+3. Table of unigrams, to be used if target wasn´t found neither in trigrams nor in bigrams
+
+```{r}
+
+existing_unigrams<- function (unigrams) {
+setkey(unigrams,count)
+prob_unigrams<-unigrams[, count := count / sum(count)][]
+setnames(prob_unigrams, "count", "probab")
+prob_unigrams<-prob_unigrams[order(-probab)]
+return(prob_unigrams)
+
+}
+```
+
+
+PREDICTION DECISION ALGORITHM
+
+```{r}
+
+#A) IputS: Assumptions and target bigram to work on:
+
+# Choose target and search for trigrams starting with "target""
+target<-"you don't"
+# Choose and assign discounting factors
+gamma2<-0.5
+gamma3<-0.5
+
+#B) We start analyzing trigrmas, and backing off to bigrams if necessary. If at the end of process there is an empty trigram list, we used the automatically generated bigrams list for prediction. If this one is also empty, we finally predict using unigrams.
+
+qbo_existing_trigs<- existing_trigrams(target,trigrams,bigrams,gamma2)
+
+alphabigram<-alphabigram(target,bigrams)
+qbo_existing_bigrams<- existing_bigrams(unigrams,bigrams,target,qbo_existing_trigs,gamma2)
+
+qbo_nonexistent_bigrams<-nonexistent_bigrams(unigrams,qbo_existing_bigrams,target,alphabigram)
+
+qbo_bigrams<-rbind(qbo_existing_bigrams,qbo_nonexistent_bigrams)
+
+alphatrigram<-alphatrigram(target,bigrams,trigrams)
+qbo_nonexistent_trigrams<-nonexistent_trigrams(qbo_bigrams,target)
+
+qbo_trigrams<-rbind(qbo_existing_trigs,qbo_nonexistent_trigrams)
+
+
+qbo_trigrams
+qbo_bigrams
+
+if (!(is.na(qbo_trigrams[1,probab]))) {
+  print ("Predicting from trigrams")
+  qbo_trigrams <- qbo_trigrams[order(-qbo_trigrams$probab), ]
+  prediction<-head(qbo_trigrams,3)
+  prediction
+  
+} else if (!(is.na(qbo_bigrams[1,probab]))) {
+  print ("Predicting from bigrams")
+  qbo_bigrams <- qbo_bigrams[order(-qbo_bigrams$probab), ]
+  prediction<-head(qbo_bigrams,3)
+  prediction
+  
+} else {
+  print ("Predicting from unigrams")
+}
+
+
+
+```
+
+
+
